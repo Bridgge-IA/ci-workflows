@@ -1,0 +1,108 @@
+name: Build and Deploy to Coolify (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        required: false
+        type: string
+      registry:
+        required: false
+        type: string
+        default: ghcr.io
+    secrets:
+      COOLIFY_WEBHOOK_URL:
+        required: true
+      COOLIFY_TOKEN:
+        required: true
+
+env:
+  REGISTRY: ${{ inputs.registry }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set lowercase image name
+        id: image
+        run: |
+          if [ -n "${{ inputs.image_name }}" ]; then
+            NAME="${{ inputs.image_name }}"
+          else
+            NAME="${{ github.repository }}"
+          fi
+          echo "name=$(echo $NAME | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix={{branch}}-
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:buildcache,mode=max
+
+      - name: Trigger Coolify Deploy
+        if: success()
+        run: |
+          URL="${{ secrets.COOLIFY_WEBHOOK_URL }}"
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+          ENCODED_MSG=$(printf '%s' "$COMMIT_MSG" | jq -sRr @uri)
+          FULL_URL="$URL&message=$ENCODED_MSG"
+
+          echo "📡 Disparando deploy com mensagem:"
+          echo "   $COMMIT_MSG"
+          echo ""
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            --retry 3 \
+            --retry-delay 2 \
+            --max-time 60 \
+            --connect-timeout 15 \
+            -H "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}" \
+            -X GET "$FULL_URL" 2>&1 || printf "curl_error\n000")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n-1)
+
+          if [ "$HTTP_CODE" = "000" ] || [ "$HTTP_CODE" = "curl_error" ]; then
+            echo "❌ Timeout ou falha de conexão ao disparar deploy"
+            echo "📋 Response: $BODY"
+            exit 1
+          fi
+
+          if [ "$HTTP_CODE" -lt 200 ] 2>/dev/null || [ "$HTTP_CODE" -ge 300 ] 2>/dev/null; then
+            echo "❌ Falha ao disparar deploy (HTTP $HTTP_CODE)"
+            echo "$BODY"
+            exit 1
+          fi
+
+          echo "✅ Deploy disparado com sucesso! (HTTP $HTTP_CODE)"
+          echo "🚀 Coolify está processando o deploy..."
