@@ -30,7 +30,7 @@ on:
 
 jobs:
   build-and-deploy:
-    uses: Bridgge/ci-workflows/.github/workflows/build-deploy-coolify.yml@main
+    uses: Bridgge-IA/ci-workflows/.github/workflows/build-deploy-coolify.yml@main
     with:
       image_name: meu-projeto  # Opcional: nome da imagem (padrão: nome do repositório)
       registry: ghcr.io        # Opcional: registry Docker (padrão: ghcr.io)
@@ -50,8 +50,15 @@ jobs:
 
 | Secret | Obrigatório | Descrição |
 |--------|-------------|-----------|
-| `COOLIFY_WEBHOOK_URL` | Sim | URL do webhook do Coolify para disparar deploy |
-| `COOLIFY_TOKEN` | Sim | Token de autenticação do Coolify |
+| `COOLIFY_WEBHOOK_URL` | Sim | `https://coolify.bridgge.com.br/api/v1/deploy?uuid=<UUID-DO-APP>` |
+| `COOLIFY_TOKEN` | Sim | Token de API do Coolify com permissão `Deploy` |
+
+> ⚠️ **O `?uuid=` é obrigatório.** O workflow anexa `&message=...` ao final da URL.
+> Uma URL sem query string falha com `curl_error/000` — que aparece como "timeout"
+> mas ocorre em milissegundos, porque o curl rejeita a URL antes de conectar.
+
+O UUID do app está na URL do painel:
+`.../application/<UUID>` — ou em **Settings → Webhooks** do recurso.
 
 #### Tags Geradas
 
@@ -96,7 +103,7 @@ on:
 
 jobs:
   deploy:
-    uses: Bridgge/ci-workflows/.github/workflows/build-deploy-coolify.yml@main
+    uses: Bridgge-IA/ci-workflows/.github/workflows/build-deploy-coolify.yml@main
     with:
       image_name: minha-api
       registry: ghcr.io
@@ -111,7 +118,40 @@ jobs:
 2. **Setup Docker Buildx** - Configura o builder Docker
 3. **Login GHCR** - Autentica no GitHub Container Registry
 4. **Build e Push** - Constrói a imagem Docker e faz push para o registry
-5. **Trigger Coolify** - Dispara o webhook do Coolify para iniciar o deploy
+5. **Trigger Coolify** - Dispara o webhook do Coolify (via `POST`) para iniciar o deploy
+
+> Um workflow "verde" significa que a **imagem foi publicada**, não que o deploy
+> chegou ao servidor. Sempre confirme que o container foi recriado.
+
+## ⚠️ Antes de publicar em produção
+
+Este workflow publica **direto em produção** — não há staging nem aprovação manual.
+Trabalhe em branch + PR; o merge é a publicação.
+
+O checklist completo de integridade está em [CLAUDE.md](../../CLAUDE.md), mas o mínimo é:
+
+1. O código carrega (build/parse sem erro)
+2. Comportamento testado — o caminho novo **e** o que já funcionava
+3. Todas as portas de entrada cobertas (body, query param, PATCH)
+4. **Mensagem de commit sem crases ou `$(...)`**
+5. Depois do merge, confirmar que o container foi recriado no servidor
+
+### Sobre a mensagem de commit
+
+A mensagem é repassada ao webhook. Ela é injetada via `env:` justamente para que o
+shell a trate como **dado**, nunca como código — antes disso, uma mensagem com crases
+derrubava o deploy com `exit 127`.
+
+Ainda assim, evite metacaracteres de shell em mensagens de commit.
+
+## 🔍 Diagnóstico de falhas
+
+| Sintoma | Causa provável |
+|---|---|
+| `exit 127` | metacaractere de shell na mensagem de commit |
+| `HTTP 401` | `COOLIFY_TOKEN` ausente, expirado ou revogado |
+| `HTTP 405` | endpoint mudou de método (o Coolify migrou `GET` → `POST`) |
+| `curl_error/000` em milissegundos | `COOLIFY_WEBHOOK_URL` malformada (sem `?uuid=`) |
 
 ## 📚 Recursos
 
