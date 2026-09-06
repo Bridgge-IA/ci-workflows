@@ -71,9 +71,14 @@ jobs:
 
       - name: Trigger Coolify Deploy
         if: success()
+        # Os valores chegam por env, nunca interpolados em ${{ }} dentro do
+        # script: a mensagem de commit é texto arbitrário e, interpolada
+        # direto, o shell executa o que estiver entre crases ou $(...).
+        env:
+          URL: ${{ secrets.COOLIFY_WEBHOOK_URL }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
         run: |
-          URL="${{ secrets.COOLIFY_WEBHOOK_URL }}"
-          COMMIT_MSG="${{ github.event.head_commit.message }}"
           ENCODED_MSG=$(printf '%s' "$COMMIT_MSG" | jq -sRr @uri)
           FULL_URL="$URL&message=$ENCODED_MSG"
 
@@ -86,7 +91,7 @@ jobs:
             --retry-delay 2 \
             --max-time 60 \
             --connect-timeout 15 \
-            -H "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}" \
+            -H "Authorization: Bearer $COOLIFY_TOKEN" \
             -X GET "$FULL_URL" 2>&1 || printf "curl_error\n000")
 
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
