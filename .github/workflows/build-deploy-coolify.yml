@@ -92,7 +92,7 @@ jobs:
             --max-time 60 \
             --connect-timeout 15 \
             -H "Authorization: Bearer $COOLIFY_TOKEN" \
-            -X GET "$FULL_URL" 2>&1 || printf "curl_error\n000")
+            -X POST "$FULL_URL" 2>&1 || printf "curl_error\n000")
 
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | head -n-1)
